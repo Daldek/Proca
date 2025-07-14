@@ -1,78 +1,126 @@
 # Ballistic Trajectory Simulator
 
-Projekt w Pythonie służący do symulacji lotu pocisku z uwzględnieniem oporu powietrza, warunków atmosferycznych i wyznaczania kąta strzału. Pozwala na:
+A Python-based project that simulates a bullet's flight trajectory using atmospheric conditions, drag physics, and ballistic parameters. Includes dynamic angle optimization to hit a target and fine-grained tracking with millimeter precision.
 
-- Dynamiczne obliczanie kąta wystrzału w celu trafienia na zadaną odległość
-- Generowanie trajektorii z milimetrową dokładnością
-- Uwzględnienie temperatury, ciśnienia i wilgotności przy wyliczaniu gęstości powietrza
-- Interpolację pozycji pocisku dokładnie w punkcie celu oraz na 100 m (jeśli dystans > 100 m)
-- Eksport trajektorii do pliku CSV z uporządkowanymi danymi czasowymi
+## Features
 
----
-## Wymagania
+- Simulation of bullet motion considering:
+  - G7 drag model
+  - Wind components
+  - Gravity
+  - Coriolis force
+- Computes firing angle to hit target elevation and distance
+- Calculates air density from temperature, pressure, and humidity
+- Drag coefficient interpolated using Mach number
+- Precise interpolation at target and optional 100 m mark
+- Exports results to CSV and PNG
+
+## Physics Foundation
+
+- **Drag Force:**  
+  Fd = 0.5 · Cd · ρ · A · v²  
+  Cd is interpolated from the G7 ballistic table.
+
+- **Coriolis Force:**  
+  ac = 2 · ω · v · sin(φ)
+
+- **Air Density:**  
+  Combines dry air and water vapor equations:
+  - ρ_dry = P / (Rd · T)
+  - ρ_vapor = Pv / (Rv · T)
+
+- **Wind Resolution:**  
+  Components resolved via wind direction angle.
+
+## Limitations
+
+Although the model aims for realism, please note the following simplifications:
+
+- Euler integration — not ideal for long-range precision
+- G7 drag data is limited — results may vary at extreme speeds
+- Coriolis force simplified — assumes constant vector per timestep
+- Humidity influence on sound speed approximated
+- No terrain elevation, spin drift, or projectile deformation
+- Assumes static, uniform wind
+
+## Requirements
 
 - Python
 - NumPy
 - Matplotlib
 
-## Instalacja
-1. Sklonuj repozytorium:
-```bash
-git clone https://github.com/Daldek/Proca.git
-cd Proca
-```
-Instalacja zależności:
+### Installation
+
 ```bash
 pip install numpy matplotlib
 ```
 
 ---
-## Uruchomienie
+
+##  Usage
+
+Run the simulator:
 
 ```bash
 python bullet_simulator.py
 ```
 
-Po uruchomieniu użytkownik zostanie poproszony o dane wejściowe:
-
-- Masa pocisku (w grainach)
-- Prędkość początkowa (m/s)
-- Odległość do celu (m)
-- Wysokość celu (m)
-- Temperatura (°C)
-- Ciśnienie atmosferyczne (hPa)
-- Wilgotność (%)
-
-Wyniki:
-- Wyliczony kąt strzału w konsoli
-- Interpolowane trafienie w punkt celu
-- Opcjonalna interpolacja dla odległości 100 m (jeśli dystans > 100 m)
-- Plik `trajectory.csv` z pełną trajektorią i punktami interpolowanymi
-- Wykres trajektorii z oznaczonym punktem celu
-
 ---
-## Struktura CSV
 
-| Time [s] | X [m]    | Y [m]    |
-|----------|----------|----------|
-| 0.000    | 0.000    | 0.000    |
-| ...      | ...      | ...      |
-| 0.1260   | 99.000   | 0.244    | ← interpolowane trafienie
-| 0.1260   | 100.000  | 0.244    | ← interpolacja na 100 m (jeśli dotyczy)
+## Input Parameters
 
----
-## Wizualizacja
+The program prompts the user to enter the following ballistic and environmental values:
 
-Trajektoria rysowana w matplotlib, z oznaczeniem celu jako czerwony „X”.
+- `mass_grain` — Bullet mass in grains
+- `velocity` — Muzzle velocity in meters per second (m/s)
+- `distance_to_target` — Horizontal range to the target (m)
+- `target_height` — Vertical elevation of the target (m)
+- `temp_c` — Ambient temperature in degrees Celsius (°C)
+- `pressure_hpa` — Atmospheric pressure in hectopascals (hPa)
+- `humidity` — Relative humidity in percentage (%)
 
----
-## Problemy i wsparcie
-Jeśli napotkasz problemy, zgłoś je w sekcji [Issues](https://github.com/Daldek/Proca/issues).
+Optional values (depending on implementation):
 
----
-## Licencja
-Projekt jest udostępniony na liencji MIT. Szczegóły znajdziesz w pliku ``License``.
+- `wind_speed` — Wind velocity (m/s)
+- `wind_angle` — Wind direction
 
----
-## Autorzy
-- [Piotr de Bever](https://www.linkedin.com/in/piotr-de-bever/) [@LinkedIn](https://www.linkedin.com/in/piotr-de-bever/)
+## 📤 Output Results
+
+After simulation and calculations, the following results are generated:
+
+- `Firing Angle` — Calculated in radians and degrees, printed to console
+- `Interpolated Impact Point` — Coordinates at distance_to_target
+- `Optional 100 m Interpolation` — Bullet position at 100 m if applicable
+- `trajectory.csv` — CSV file with timestamped kinematic data:
+  - Time [s], X [m], Y [m], Z [m], Velocity [m/s], Energy [J]
+- `trajectory.png` — Visualization of vertical profile, lateral drift, and velocity/energy
+
+
+## CSV Structure
+
+| Time [s] | X [m] | Y [m] | Z [m]   | Velocity [m/s] | Energy [J]  |
+|----------|-------|--------|--------|----------------|-------------|
+| 0.0000   | 0.000 | 0.000  | 0.000  | 900.00         | 1443.4      |
+| ...      | ...   | ...    | ...    | ...            | ...         |
+| 0.1140   | 99.106| 0.244  | 0.000  | 840.14         | 1257.8      |
+| 0.1160   |100.000| 0.000  | 0.000  | 838.96         | 1253.4      |
+
+## Developer Notes
+
+- Central class: `Bullet`
+- Detailed docstrings included with physics formulas
+- Modularity for future extensions
+- CLI implementation via argparse
+
+## Troubleshooting
+
+Report issues here:  
+[GitHub Issues](https://github.com/Daldek/Proca/issues)
+
+## License
+
+Distributed under the MIT License. See the `License` file for details.
+
+## Author
+
+- [Piotr de Bever](https://www.linkedin.com/in/piotr-de-bever/)

@@ -4,6 +4,25 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 class Bullet:
+    """
+    Simulates a bullet's flight trajectory based on ballistic and environmental parameters.
+
+    Attributes:
+        caliber (float): Bullet diameter in inches or millimeters.
+        bc (float): Ballistic coefficient indicating aerodynamic efficiency.
+        mass_grain (float): Bullet mass in grains.
+        velocity (float): Muzzle velocity in m/s.
+        distance_to_target (float): Horizontal range to target in meters.
+        target_height (float): Target's vertical elevation in meters.
+        wind_speed (float): Wind velocity in m/s.
+        wind_angle (float): Wind direction in degrees (0° is headwind).
+        temp_c (float): Air temperature in °C.
+        pressure_hpa (float): Air pressure in hPa.
+        humidity (float): Relative humidity (0–100%).
+        azimuth (float): Firing direction in degrees from north.
+        lat (float): Latitude for Coriolis correction.
+    """
+    
     GRAIN_TO_KG = 0.00006479891
 
     def __init__(self, caliber=0.223, bc=0.27, mass_grain=55, velocity=900, distance_to_target=100, target_height=0,
@@ -25,8 +44,20 @@ class Bullet:
         self.azimuth = azimuth
         self.lat = lat
         self.angle_rad = self.find_firing_angle()
+        self.interpolated_results = {}
 
     def calculate_air_density(self, temp_c, pressure_hpa, humidity):
+        """
+        Calculates the air density [kg/m³] based on ambient temperature, pressure, and humidity.
+
+        Uses components of the ideal gas law:
+        - Dry air contribution: rho = P_d / (R_d * T)
+        - Water vapor contribution: rho = P_v / (R_v * T)
+
+        Returns:
+            float: Air density in kilograms per cubic meter.
+        """
+
         T = temp_c + 273.15
         pressure_pa = pressure_hpa * 100
         sat_pressure = 6.1078 * 10 ** (7.5 * temp_c / (temp_c + 237.3)) * 100
@@ -37,30 +68,67 @@ class Bullet:
         return (p_d / (Rd * T)) + (p_v / (Rv * T))
 
     def calculate_speed_of_sound(self, temp_c, humidity):
-        # Podstawowy wzór z temperaturą
+        """
+        Estimates the speed of sound [m/s] in humid air.
+
+        Base formula:
+            c = 331.3 * sqrt(1 + T / 273.15)
+        A simplified humidity correction adds ~0.1 m/s per percent.
+
+        Returns:
+            float: Speed of sound in meters per second.
+        """
+
         c = 331.3 * np.sqrt(1 + temp_c / 273.15)
-
-        # Opcjonalne poprawki na wilgotność – uproszczone (niewielki wpływ)
         c += humidity * 0.1  # szacunkowo: +0.1 m/s na każdy 1% wilgotności
-
         return c
 
     def calculate_wind_components(self):
+        """
+        Resolves wind speed into X and Y components based on wind direction.
+
+        Uses basic trigonometry:
+            Vx = V * cos(theta), Vy = V * sin(theta)
+
+        Returns:
+            Tuple[float, float]: (wind_vx, wind_vy) in m/s.
+        """
+
         angle_rad = np.radians(self.wind_angle)
         wind_vx = self.wind_speed * np.cos(angle_rad)
         wind_vy = self.wind_speed * np.sin(angle_rad)
         return wind_vx, wind_vy
 
     def interpret_caliber(self):
+        """
+        Determines bullet diameter in meters based on caliber unit.
+
+        - If caliber < 1.5: assumed inches -> converted to meters.
+        - Otherwise: assumed millimeters -> converted to meters.
+
+        Returns:
+            float: Bullet diameter in meters.
+        """
+
         if self.caliber < 1.5:
-            # prawdopodobnie cale
-            return self.caliber * 0.0254  # 1 cal = 25.4 mm
+            return self.caliber * 0.0254  # 1 inch = 25.4 mm
         else:
-            # prawdopodobnie milimetry
-            return self.caliber / 1000.0  # milimetry na metry
+            return self.caliber / 1000.0  # mm to m
 
     def get_cd_g7(self, mach):
-        # Prosta interpolacja liniowa pomiędzy punktami
+        """
+        Interpolates the drag coefficient (Cd) using G7 ballistic standard.
+
+        Based on Mach number, performs linear interpolation between tabulated values.
+        Accounts for aerodynamic characteristics at different speeds.
+
+        Args:
+            mach (float): Mach number (velocity / speed of sound).
+
+        Returns:
+            float: Interpolated drag coefficient.
+        """
+
         g7_table = [
             (0.2, 0.150),
             (0.5, 0.145),
@@ -91,16 +159,39 @@ class Bullet:
         return g7_table[-1][1]  # fallback
   
     def simulate_trajectory(self, angle_rad, dt=0.002):
+        """
+        Simulates the bullet's flight trajectory with air drag, gravity, wind, and Coriolis force.
+
+        Numerical integration (Euler method) is performed iteratively with:
+        - Drag based on Cd, air density, and cross-sectional area.
+        - Wind influence via velocity correction.
+        - Gravity acting vertically.
+        - Coriolis acceleration due to Earth's rotation.
+
+        Args:
+            angle_rad (float): Firing angle in radians.
+            dt (float): Time step in seconds.
+
+        Returns:
+            np.ndarray: Array of trajectory points [t, x, y, z, velocity, kinetic_energy].
+        """
+
         g = 9.81
         omega = 7.292115e-5
         azimuth = np.radians(self.azimuth)
         phi = np.radians(self.lat)
+        
+        air_density = self.air_density
+        mass_kg = self.mass_kg
+        area = self.area
+        speed_of_sound = self.speed_of_sound
+        
         vx = self.velocity * np.cos(angle_rad)  # kierunek do przodu (X)
         vz = self.velocity * np.sin(angle_rad)  # wysokość (Z)
         vy = 0.0  # boczny dryf (Y)
 
         x, y, z, t = 0.0, 0.0, 0.0, 0.0
-        points = []
+        points = [[t, x, y, z, self.velocity, 0.5 * self.mass_kg * self.velocity**2]]
         wind_vx, wind_vy = self.calculate_wind_components()
 
         extra_step = False
@@ -110,13 +201,15 @@ class Bullet:
             v_rel_z = vz
             v_rel = np.sqrt(v_rel_x**2 + v_rel_y**2 + v_rel_z**2)
 
-            mach = v_rel / self.speed_of_sound
+            mach = v_rel / speed_of_sound
             cd = self.get_cd_g7(mach)
 
-            drag = 0.5 * self.air_density * v_rel**2 * cd * self.area
-            ax = -drag * v_rel_x / (v_rel * self.mass_kg)
-            ay = -drag * v_rel_y / (v_rel * self.mass_kg)
-            az = -g - drag * v_rel_z / (v_rel * self.mass_kg)
+            drag = 0.5 * air_density * v_rel**2 * cd * area
+            factor = drag / (mass_kg * v_rel)
+            
+            ax = -factor * v_rel_x
+            ay = -factor * v_rel_y
+            az = -g - factor * v_rel_z
 
             # Coriolis effect
             a_coriolis = 2 * omega * np.sin(phi)
@@ -142,11 +235,26 @@ class Bullet:
                 extra_step = True
 
         traj = np.array(points)
-        self.interpolated_impact = self.interpolate_at_x(traj, self.distance_to_target)
-        self.interpolated_at_100m = self.interpolate_at_x(traj, 100.0) if self.distance_to_target > 100 else None
+        self.interpolated_results = {}  # Czyszczenie, jeśli metoda wywoływana wielokrotnie
+        for distance in [self.distance_to_target, 100.0]:
+            self.interpolated_results[distance] = self.interpolate_at_x(traj, distance)
         return traj
 
     def interpolate_at_x(self, traj, target_x):
+        """
+        Linearly interpolates trajectory data at a given horizontal position.
+
+        Extracts intermediate data between two adjacent points:
+            p(x) = p1 + ratio * (p2 - p1)
+
+        Args:
+            traj (np.ndarray): Simulated trajectory data.
+            target_x (float): Desired horizontal position.
+
+        Returns:
+            np.ndarray: Interpolated trajectory point [t, x, y, z, v, E].
+        """
+
         over_index = next((i for i, p in enumerate(traj) if p[1] >= target_x), None)
         if over_index is not None and over_index > 0:
             p1 = traj[over_index - 1]
@@ -154,56 +262,69 @@ class Bullet:
             denom = p2[1] - p1[1]
             if denom == 0:
                 return [None, target_x, None, None, None, None]
-            ratio = (target_x - p1[1]) / (p2[1] - p1[1])
-            t = p1[0] + ratio * (p2[0] - p1[0])
-            y = p1[2] + ratio * (p2[2] - p1[2])
-            z = p1[3] + ratio * (p2[3] - p1[3])
-            speed = p1[4] + ratio * (p2[4] - p1[4])
-            energy = p1[5] + ratio * (p2[5] - p1[5])
-            return [t, target_x, y, z, speed, energy]
+            ratio = (target_x - p1[1]) / denom
+            return p1 + ratio * (p2 - p1)
         else:
             return [None, target_x, None, None, None, None]
 
-    def find_firing_angle(self, tolerance=0.001, max_steps=200):
-        angle = np.radians(0.1)
-        step = np.radians(0.1)
-        last_direction = None
+    def find_firing_angle(self, tolerance=0.001, max_steps=100):
+        """
+        Optimizes the firing angle to hit the target height at the correct horizontal distance.
+
+        Uses binary search between 0.01° and 10° to minimize vertical error.
+
+        Args:
+            tolerance (float): Acceptable height error in meters.
+            max_steps (int): Maximum iterations for convergence.
+
+        Returns:
+            float: Estimated firing angle in radians.
+        """
+
+        low = np.radians(0.01)
+        high = np.radians(10.0)
 
         for _ in range(max_steps):
+            angle = (low + high) / 2
             traj = self.simulate_trajectory(angle)
-            over_index = next((i for i, p in enumerate(traj) if p[1] >= self.distance_to_target), None)
-            if over_index is None or over_index == 0:
-                angle += step
+            z_at_target = self.interpolate_at_x(traj, self.distance_to_target)[3]
+
+            if z_at_target is None:
+                low = angle
                 continue
 
-            p1 = traj[over_index - 1]
-            p2 = traj[over_index]
-            ratio = (self.distance_to_target - p1[1]) / (p2[1] - p1[1])
-            z_at_target = p1[3] + ratio * (p2[3] - p1[3])
-            error = abs(z_at_target - self.target_height)
+            error = z_at_target - self.target_height
 
-            if error < tolerance:
+            if abs(error) < tolerance:
                 return angle
 
-            direction = 1 if z_at_target < self.target_height else -1
-            if last_direction is not None and direction != last_direction:
-                step *= 0.5
+            if error > 0:
+                high = angle
+            else:
+                low = angle
 
-            angle += direction * step
-            angle = np.clip(angle, np.radians(0.01), np.radians(10.0))
-            last_direction = direction
-
-            if step < 1e-8:
+            if abs(high - low) < 1e-8:
                 break
 
         return angle
 
-def save_to_csv(points, filename, interpolated_point=None, interpolated_100m=None):
+
+def save_to_csv(points, interpolated_results=None, filename="trajectory.csv"):
+    """
+    Saves the simulated trajectory and optional interpolation points to a CSV file.
+
+    Args:
+        points (list): List of trajectory data rows.
+        interpolated_results (dict, optional): Additional data points (e.g. impact points).
+        filename (str): Output CSV filename.
+    """
+
     output = [list(p) for p in points]
-    if interpolated_point and interpolated_point[0] is not None:
-        output.append(interpolated_point)
-    if interpolated_100m and interpolated_100m[0] is not None:
-        output.append(interpolated_100m)
+    if interpolated_results:
+        for key in sorted(interpolated_results.keys()):
+            point = interpolated_results[key]
+            if point[0] is not None:
+                output.append(point.tolist()) if isinstance(point, np.ndarray) else point
 
     output.sort(key=lambda row: row[0])
 
@@ -216,7 +337,22 @@ def save_to_csv(points, filename, interpolated_point=None, interpolated_100m=Non
                 f"{row[3]:.3f}", f"{row[4]:.2f}", f"{row[5]:.1f}"
             ])
 
-def plot_all(traj, target_distance, target_height):
+def save_to_png(traj, target_distance, target_height, filename="trajectory.png"):
+    """
+    Generates three plots:
+    1. Vertical profile: height vs distance.
+    2. Horizontal drift: lateral offset over distance.
+    3. Time evolution: velocity and kinetic energy.
+
+    Saves result as a PNG image.
+
+    Args:
+        traj (np.ndarray): Trajectory data.
+        target_distance (float): Target horizontal position.
+        target_height (float): Target vertical position.
+        filename (str): Output PNG filename.
+    """
+
     fig, axs = plt.subplots(3, 1, figsize=(10, 12))
 
     # Wykres 1 — trajektoria pionowa (X vs Z)
@@ -227,6 +363,7 @@ def plot_all(traj, target_distance, target_height):
     axs[0].set_title('Vertical trajectory (X-Z)')
     axs[0].legend()
     axs[0].grid()
+    axs[0].set_xlim(left=0)
 
     # Wykres 2 — boczny dryf (X vs Y)
     axs[1].plot(traj[:, 1], traj[:, 2], label="Y (lateral drift)")
@@ -236,6 +373,7 @@ def plot_all(traj, target_distance, target_height):
     axs[1].set_title('Horizontal drift (X-Y)')
     axs[1].legend()
     axs[1].grid()
+    axs[1].set_xlim(left=0)
 
     # Wykres 3 — prędkość i energia kinetyczna w czasie (t vs V i E)
     ax3 = axs[2]
@@ -254,13 +392,37 @@ def plot_all(traj, target_distance, target_height):
     ax3b.tick_params(axis='y', labelcolor='g')
 
     ax3.set_title('Velocity & Kinetic Energy over time')
+    axs[2].set_xlim(left=0)
+    
     fig.tight_layout()
-    plt.show()
-
+    plt.savefig(filename)
+    plt.close(fig)
 
 
 if __name__ == "__main__":
+    """
+    Main execution block:
+    - Parses command-line input
+    - Constructs Bullet object with parameters
+    - Simulates trajectory
+    - Computes firing angle
+    - Saves trajectory results to CSV and PNG
+    - Displays impact info on console
+    """
+
     def parse_args():
+        """
+        Parses command-line arguments using argparse.
+
+        Supported options:
+            --caliber, --bc, --mass_grain, --velocity, --distance_to_target,
+            --target_height, --wind_speed, --wind_angle, --temp_c,
+            --pressure_hpa, --humidity, --azimuth, --lat
+
+        Returns:
+            argparse.Namespace: Parsed user input as attributes.
+        """
+
         parser = argparse.ArgumentParser(description="Ballistic trajectory simulator")
         parser.add_argument("--caliber", type=float, default=0.223, help="Caliber (inches or mm)")
         parser.add_argument("--bc", type=float, default=0.27, help="Ballistic coefficient (BC)")
@@ -284,7 +446,7 @@ if __name__ == "__main__":
     traj = bullet.simulate_trajectory(bullet.angle_rad)
     impact = bullet.interpolated_impact
 
-    save_to_csv(traj, "trajectory.csv", bullet.interpolated_impact, bullet.interpolated_at_100m)
+    save_to_csv(traj, bullet.interpolated_results)
     print("Results saved to trajectory.csv")
     print(f"Required firing angle: {np.degrees(bullet.angle_rad):.6f}°")
-    plot_all(traj, bullet.distance_to_target, bullet.target_height)
+    save_to_png(traj, bullet.distance_to_target, bullet.target_height)
