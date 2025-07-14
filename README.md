@@ -8,8 +8,7 @@ A Python-based project that simulates a bullet's flight trajectory using atmosph
   - G7 drag model
   - Wind components
   - Gravity
-  - Coriolis force
-- Computes firing angle and azimuth to hit target elevation and distance
+- Computes firing angle and azimuth correction to hit target elevation and lateral position
 - Calculates air density from temperature, pressure, and humidity
 - Drag coefficient interpolated using Mach number
 - Precise interpolation at target and optional 100 m mark
@@ -23,10 +22,6 @@ The simulator models motion using the following physical principles:
   $$F_d = \frac{1}{2} C_d \cdot \rho \cdot A \cdot v^2$$  
   Drag coefficient \(C_d\) is interpolated from the G7 ballistic standard based on the Mach number.
 
-- **Coriolis Effect:**  
-  $$a_c = 2 \cdot \omega \cdot v \cdot \sin(\phi)$$  
-  Introduces lateral drift (Y-axis) caused by Earth’s rotation. Depends on latitude and absolute firing azimuth (geographic).
-
 - **Air Density:**  
   Computed using components of the ideal gas law:
   - Dry air: 
@@ -35,12 +30,12 @@ The simulator models motion using the following physical principles:
   $$\rho = P_v / (R_v \cdot T)$$
 
 - **Wind Effects:**  
-  Wind is decomposed into horizontal and lateral components based on its angle. A crosswind induces sideways drift of the bullet.
+  Wind is decomposed into horizontal and lateral components based on its angle relative to the shooter-target line (X-axis). A crosswind induces sideways drift of the bullet.
 
 - **Firing Azimuth Correction:**  
-  To compensate for lateral drift at the target distance, the simulator dynamically adjusts the firing azimuth — the horizontal angle of the shot relative to the direct shooter-to-target line.  
-  This correction ensures the bullet lands at the center of the target despite crosswinds or Coriolis deviations.  
-  It is computed automatically after the elevation angle is found and combined with the geographic azimuth to define the full shot direction.
+  To compensate for lateral drift caused by crosswinds, the simulator dynamically adjusts the firing azimuth — the horizontal angle of the shot relative to the direct shooter-to-target axis (X-axis).  
+  This correction ensures the bullet lands centered on the target despite wind.  
+  It is computed automatically after the elevation angle is found.
 
 ## Limitations
 
@@ -48,9 +43,8 @@ Although the model aims for realism, please note the following simplifications:
 
 - Euler integration — not ideal for long-range precision
 - G7 drag data is limited — results may vary at extreme speeds
-- Coriolis force simplified — assumes constant vector per timestep
 - Humidity influence on sound speed approximated
-- No terrain elevation, spin drift, or projectile deformation
+- No terrain elevation, spin drift, Coriolis force, or projectile deformation
 - Assumes static, uniform wind
 
 ## Requirements
@@ -99,6 +93,7 @@ Optional values (depending on implementation):
 After simulation and calculations, the following results are generated:
 
 - `Firing Angle` — Calculated in radians and degrees, printed to console
+- `Azimuth Correction` —  Horizontal angle correction relative to shooter-target line, compensating wind drift
 - `Interpolated Impact Point` — Coordinates at distance_to_target
 - `Optional 100 m Interpolation` — Bullet position at 100 m if applicable
 - `trajectory.csv` — CSV file with timestamped kinematic data:
