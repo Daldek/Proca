@@ -41,9 +41,11 @@ class Bullet:
         self.speed_of_sound = self.calculate_speed_of_sound(temp_c, humidity)
         self.interpolated_impact = None
         self.interpolated_at_100m = None
-        self.azimuth = azimuth
+        self.azimuth_geo = azimuth
+        self.azimuth_correction = 0.0
         self.lat = lat
         self.angle_rad = self.find_firing_angle()
+        self.azimuth_correction = self.find_firing_azimuth(self.angle_rad)
         self.interpolated_results = {}
 
     def calculate_air_density(self, temp_c, pressure_hpa, humidity):
@@ -178,7 +180,7 @@ class Bullet:
 
         g = 9.81
         omega = 7.292115e-5
-        azimuth = np.radians(self.azimuth)
+        azimuth = np.radians(self.azimuth_geo + self.azimuth_correction)
         phi = np.radians(self.lat)
         
         air_density = self.air_density
@@ -186,9 +188,10 @@ class Bullet:
         area = self.area
         speed_of_sound = self.speed_of_sound
         
-        vx = self.velocity * np.cos(angle_rad)  # kierunek do przodu (X)
-        vz = self.velocity * np.sin(angle_rad)  # wysokość (Z)
-        vy = 0.0  # boczny dryf (Y)
+        vx = self.velocity * np.cos(angle_rad) * np.cos(azimuth)
+        vy = self.velocity * np.cos(angle_rad) * np.sin(azimuth)
+        vz = self.velocity * np.sin(angle_rad)
+
 
         x, y, z, t = 0.0, 0.0, 0.0, 0.0
         points = [[t, x, y, z, self.velocity, 0.5 * self.mass_kg * self.velocity**2]]
@@ -269,9 +272,12 @@ class Bullet:
 
     def find_firing_angle(self, tolerance=0.001, max_steps=100):
         """
-        Optimizes the firing angle to hit the target height at the correct horizontal distance.
+        Optimizes both the vertical firing angle and horizontal azimuth to ensure the bullet hits
+        the target elevation and is centered laterally at the target distance.
 
-        Uses binary search between 0.01° and 10° to minimize vertical error.
+        Uses binary search:
+        - Outer loop: adjusts elevation angle (angle_rad) to match target height (Z)
+        - Inner loop (optional): adjusts azimuth to minimize lateral offset (Y)
 
         Args:
             tolerance (float): Acceptable height error in meters.
@@ -307,6 +313,48 @@ class Bullet:
                 break
 
         return angle
+
+    def find_firing_azimuth(self, angle_rad, tolerance=0.001, max_steps=100):
+        """
+        Optimizes the horizontal firing angle (azimuth) to center the bullet laterally at the target.
+
+        Uses binary search to minimize lateral deviation (Y) at the target distance.
+
+        Args:
+            angle_rad (float): Vertical firing angle (in radians).
+            tolerance (float): Acceptable lateral error in meters.
+            max_steps (int): Max search iterations.
+
+        Returns:
+            float: Optimal azimuth angle in degrees.
+        """
+        low = self.azimuth_correction - 5.0
+        high = self.azimuth_correction + 5.0
+
+        for _ in range(max_steps):
+            firing_azimuth = (low + high) / 2
+            self.azimuth_correction = firing_azimuth
+
+            traj = self.simulate_trajectory(angle_rad)
+            impact_point = self.interpolate_at_x(traj, self.distance_to_target)
+            if impact_point is None:
+                break
+
+            y_at_target = impact_point[2]
+            error = y_at_target
+
+            if abs(error) < tolerance:
+                return firing_azimuth
+
+            if error > 0:
+                high = firing_azimuth
+            else:
+                low = firing_azimuth
+
+            if abs(high - low) < 1e-6:
+                break
+
+        return firing_azimuth
 
 
 def save_to_csv(points, interpolated_results=None, filename="trajectory.csv"):
@@ -449,4 +497,6 @@ if __name__ == "__main__":
     save_to_csv(traj, bullet.interpolated_results)
     print("Results saved to trajectory.csv")
     print(f"Required firing angle: {np.degrees(bullet.angle_rad):.6f}°")
+    print(f"Azimuth correction: {bullet.azimuth_correction:+.3f}° relative to target line")
+    print(f"Total azimuth (absolute): {bullet.azimuth_geo + bullet.azimuth_correction:.3f}°")
     save_to_png(traj, bullet.distance_to_target, bullet.target_height)

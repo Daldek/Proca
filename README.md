@@ -9,7 +9,7 @@ A Python-based project that simulates a bullet's flight trajectory using atmosph
   - Wind components
   - Gravity
   - Coriolis force
-- Computes firing angle to hit target elevation and distance
+- Computes firing angle and azimuth to hit target elevation and distance
 - Calculates air density from temperature, pressure, and humidity
 - Drag coefficient interpolated using Mach number
 - Precise interpolation at target and optional 100 m mark
@@ -17,20 +17,30 @@ A Python-based project that simulates a bullet's flight trajectory using atmosph
 
 ## Physics Foundation
 
-- **Drag Force:**  
-  Fd = 0.5 · Cd · ρ · A · v²  
-  Cd is interpolated from the G7 ballistic table.
+The simulator models motion using the following physical principles:
 
-- **Coriolis Force:**  
-  ac = 2 · ω · v · sin(φ)
+- **Drag Force (Fd):**  
+  $$F_d = \frac{1}{2} C_d \cdot \rho \cdot A \cdot v^2$$  
+  Drag coefficient \(C_d\) is interpolated from the G7 ballistic standard based on the Mach number.
+
+- **Coriolis Effect:**  
+  $$a_c = 2 \cdot \omega \cdot v \cdot \sin(\phi)$$  
+  Introduces lateral drift (Y-axis) caused by Earth’s rotation. Depends on latitude and absolute firing azimuth (geographic).
 
 - **Air Density:**  
-  Combines dry air and water vapor equations:
-  - ρ_dry = P / (Rd · T)
-  - ρ_vapor = Pv / (Rv · T)
+  Computed using components of the ideal gas law:
+  - Dry air: 
+  $$\rho = P / (R_d \cdot T)$$
+  - Water vapor:
+  $$\rho = P_v / (R_v \cdot T)$$
 
-- **Wind Resolution:**  
-  Components resolved via wind direction angle.
+- **Wind Effects:**  
+  Wind is decomposed into horizontal and lateral components based on its angle. A crosswind induces sideways drift of the bullet.
+
+- **Firing Azimuth Correction:**  
+  To compensate for lateral drift at the target distance, the simulator dynamically adjusts the firing azimuth — the horizontal angle of the shot relative to the direct shooter-to-target line.  
+  This correction ensures the bullet lands at the center of the target despite crosswinds or Coriolis deviations.  
+  It is computed automatically after the elevation angle is found and combined with the geographic azimuth to define the full shot direction.
 
 ## Limitations
 
@@ -123,4 +133,4 @@ Distributed under the MIT License. See the `License` file for details.
 
 ## Author
 
-- [Piotr de Bever](https://www.linkedin.com/in/piotr-de-bever/)
+- [Piotr de Bever](https://debever.pl) [@LinkedIn](https://www.linkedin.com/in/piotr-de-bever/)
