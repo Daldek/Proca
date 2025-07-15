@@ -1,7 +1,78 @@
 import argparse
 import csv
+import math
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+from mpl_toolkits.mplot3d import Axes3D
+
+class Atmosphere:
+    """
+    Represents environmental conditions for ballistics calculations.
+    
+    Attributes:
+        wind_speed (float): Wind speed in m/s.
+        wind_angle (float): Wind direction in degrees relative to X axis.
+                            0° = headwind (against shot), 90° = wind from left,
+                            180° = tailwind, 270° = wind from right.
+        temp_c (float):
+        pressure_hpa (float):
+        humidity (float):
+    """
+    
+    def __init__(self, wind_speed=0, wind_angle=0, temp_c=15, pressure_hpa=1013.25, humidity=50):
+        self.wind_speed = wind_speed
+        self.wind_angle = wind_angle
+        self.temp_c = temp_c
+        self.pressure_hpa = pressure_hpa
+        self.humidity = humidity
+    
+    @property
+    def air_density(self):
+        """
+        Calculates the air density [kg/m³] based on ambient temperature, pressure, and humidity.
+
+        Returns:
+            float: Air density in kilograms per cubic meter.
+        """
+        t = self.temp_c + 273.15
+        pressure_pa = self.pressure_hpa * 100
+        sat_pressure = 6.1078 * 10 ** (7.5 * self.temp_c / (self.temp_c + 237.3)) * 100
+        p_v = self.humidity / 100 * sat_pressure
+        p_d = pressure_pa - p_v
+        rd = 287.058
+        rv = 461.495
+        return (p_d / (rd * t)) + (p_v / (rv * t))
+
+    @property
+    def speed_of_sound(self):
+        """
+        Estimates the speed of sound [m/s] in humid air.
+
+        Returns:
+            float: Speed of sound in meters per second.
+        """
+        c = 331.3 * np.sqrt(1 + self.temp_c / 273.15)
+        c += self.humidity * 0.1  # Approximate humidity correction: +0.1 m/s per 1% humidity
+        return c
+
+    @property
+    def wind_components(self):
+        """
+        Resolves wind speed into X and Y components based on wind direction.
+
+        Wind angle is measured relative to the shooter's firing line (X-axis):
+        0° = headwind (against shot), 90° = wind from left,
+        180° = tailwind, 270° = wind from right.
+
+        Returns:
+            tuple: (wind_vx, wind_vy) wind velocity components in m/s.
+        """
+        angle_rad = np.radians(self.wind_angle)
+        wind_vx = self.wind_speed * np.cos(angle_rad)
+        wind_vy = self.wind_speed * np.sin(angle_rad)
+        return wind_vx, wind_vy
+
 
 class Bullet:
     """
@@ -33,73 +104,60 @@ class Bullet:
                  humidity=50, shooter_coords=None, target_coords=None):
         self.caliber = caliber
         self.bc = bc
-        self.BULLET_DIAMETER = self.interpret_caliber()
-        self.area = np.pi * (self.BULLET_DIAMETER / 2) ** 2
-        self.mass_kg = mass_grain * self.GRAIN_TO_KG
+        self.mass_grain = mass_grain
         self.velocity = velocity
         self.distance_to_target = distance_to_target
         self.target_height = target_height
-        self.wind_speed = wind_speed
-        self.wind_angle = wind_angle
-        self.air_density = self.calculate_air_density(temp_c, pressure_hpa, humidity)
-        self.speed_of_sound = self.calculate_speed_of_sound(temp_c, humidity)
+        self.atmosphere = Atmosphere(wind_speed, wind_angle, temp_c, pressure_hpa, humidity)
         self.shooter_coords = shooter_coords
         self.target_coords = target_coords
+        
+        if self.shooter_coords and self.target_coords:
+            self.distance_to_target, _ = self.haversine_distance_and_azimuth
+            
+        self._bullet_diameter = self._interpret_caliber()
+        self._bullet_area = np.pi * (self._bullet_diameter / 2) ** 2
+        self._bullet_mass_kg = mass_grain * self.GRAIN_TO_KG
         self.angle_rad = self.find_firing_angle()
         self.interpolated_results = {}
 
-    def calculate_air_density(self, temp_c, pressure_hpa, humidity):
-        """
-        Calculates the air density [kg/m³] based on ambient temperature, pressure, and humidity.
 
-        Args:
-            temp_c (float): Air temperature in °C.
-            pressure_hpa (float): Atmospheric pressure in hPa.
-            humidity (float): Relative humidity in %.
+    @property
+    def haversine_distance_and_azimuth(self):
+        """
+        Calculates the great-circle distance and azimuth from shooter to target using geographical coordinates.
 
         Returns:
-            float: Air density in kilograms per cubic meter.
+            tuple: (distance_km, azimuth_deg)
         """
-        T = temp_c + 273.15
-        pressure_pa = pressure_hpa * 100
-        sat_pressure = 6.1078 * 10 ** (7.5 * temp_c / (temp_c + 237.3)) * 100
-        p_v = humidity / 100 * sat_pressure
-        p_d = pressure_pa - p_v
-        Rd = 287.058
-        Rv = 461.495
-        return (p_d / (Rd * T)) + (p_v / (Rv * T))
+        if self.target_coords is None:
+            raise ValueError("Target coordinates not set.")
 
-    def calculate_speed_of_sound(self, temp_c, humidity):
-        """
-        Estimates the speed of sound [m/s] in humid air.
+        lat1, lon1 = map(math.radians, self.shooter_coords)
+        lat2, lon2 = map(math.radians, self.target_coords)
 
-        Args:
-            temp_c (float): Air temperature in °C.
-            humidity (float): Relative humidity in %.
+        # Difference in coordinates
+        delta_lat = lat2 - lat1
+        delta_lon = lon2 - lon1
 
-        Returns:
-            float: Speed of sound in meters per second.
-        """
-        c = 331.3 * np.sqrt(1 + temp_c / 273.15)
-        c += humidity * 0.1  # Approximate humidity correction: +0.1 m/s per 1% humidity
-        return c
+        # Haversine formula for distance
+        a = math.sin(delta_lat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(delta_lon / 2) ** 2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        earth_radius = 6371000.0
+        distance = earth_radius * c
 
-    def calculate_wind_components(self):
-        """
-        Resolves wind speed into X and Y components based on wind direction.
+        # Formula for azimuth (initial bearing)
+        x = math.sin(delta_lon) * math.cos(lat2)
+        y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(delta_lon)
+        azimuth_rad = math.atan2(x, y)
+        azimuth_deg = (math.degrees(azimuth_rad) + 360) % 360
+        return distance, azimuth_deg
 
-        Wind angle is measured relative to the shooter's firing line (X-axis):
-        0° = headwind (against shot), 90° = wind from left, 270° = wind from right.
-
-        Returns:
-            tuple: (wind_vx, wind_vy) wind velocity components in m/s.
-        """
-        angle_rad = np.radians(self.wind_angle)
-        wind_vx = self.wind_speed * np.cos(angle_rad)
-        wind_vy = self.wind_speed * np.sin(angle_rad)
-        return wind_vx, wind_vy
-
-    def interpret_caliber(self):
+    @property
+    def bullet(self):
+        return self._bullet_diameter, self._bullet_area, self._bullet_mass_kg
+    
+    def _interpret_caliber(self):
         """
         Converts caliber input to bullet diameter in meters.
 
@@ -169,10 +227,10 @@ class Bullet:
                         [time, x, y, z, distance_xy, distance_3d, speed, kinetic_energy]
         """
         g = 9.81
-        air_density = self.air_density
-        mass_kg = self.mass_kg
-        area = self.area
-        speed_of_sound = self.speed_of_sound
+        air_density = self.atmosphere.air_density
+        mass_kg = self._bullet_mass_kg
+        area = self._bullet_area
+        speed_of_sound = self.atmosphere.speed_of_sound
 
         # Initial velocity components (accounting for azimuth correction)
         vx = self.velocity * np.cos(angle_rad) * np.cos(azimuth_rad)
@@ -180,9 +238,9 @@ class Bullet:
         vz = self.velocity * np.sin(angle_rad)
 
         x, y, z, t = 0.0, 0.0, 0.0, 0.0
-        points = [[t, x, y, z, 0.0, 0.0, self.velocity, 0.5 * mass_kg * self.velocity ** 2]]
+        points = [[t, x, y, z, 0.0, 0.0, self.velocity, 0.5 * self._bullet_mass_kg * self.velocity ** 2]]
 
-        wind_vx, wind_vy = self.calculate_wind_components()
+        wind_vx, wind_vy = self.atmosphere.wind_components
 
         extra_step = False
         while True:
@@ -365,55 +423,61 @@ def save_to_csv(points, interpolated_results=None, filename="trajectory.csv"):
             ])
 
 def save_to_png(traj, target_distance, target_height, filename="trajectory.png"):
-    """
-    Generates plots showing vertical trajectory, horizontal drift, velocity, and kinetic energy.
+    fig = plt.figure(figsize=(10, 16))
+    gs = fig.add_gridspec(4, 1, height_ratios=[2, 1, 1, 1])
+    
+    ax0 = fig.add_subplot(gs[0], projection='3d')
+    ax0.set_box_aspect([2, 1, 1])
+    sc = ax0.scatter(traj[:, 1], traj[:, 2], traj[:, 3], c=traj[:, 6], cmap='plasma', s=5)
+    ax0.scatter(target_distance, 0, target_height, color='red', label="Target", s=50)
+    ax0.set_title("Isometric 3D view of trajectory")
+    ax0.set_xlabel("X [m]")
+    ax0.set_ylabel("Y [m]")
+    ax0.set_zlabel("Z [m]")
+    ax0.view_init(elev=30, azim=330)
+    fig.colorbar(sc, ax=ax0, shrink=0.6, label="Velocity [m/s]")
+    ax0.legend()
+    ax0.grid()
+    ax0.tick_params(axis='x', pad=1)
+    ax0.tick_params(axis='y', pad=1)
+    for label in ax0.get_yticklabels():
+        label.set_rotation(330)
 
-    Args:
-        traj (np.ndarray): Trajectory data.
-        target_distance (float): Target horizontal distance in meters.
-        target_height (float): Target vertical height in meters.
-        filename (str): Output PNG filename.
-    """
-    fig, axs = plt.subplots(3, 1, figsize=(10, 12))
 
-    # Vertical trajectory (Distance XY vs Height)
+    axs = [fig.add_subplot(gs[i]) for i in range(1, 4)]
+
+    # 1. Trajektoria pionowa
     axs[0].plot(traj[:, 4], traj[:, 3], label="Z (height)")
     axs[0].plot(target_distance, target_height, 'rx', markersize=8, label='Target')
-    axs[0].set_xlabel('Distance [m]')
-    axs[0].set_ylabel('Height [m]')
-    axs[0].set_title('Vertical trajectory (Distance-Z)')
+    axs[0].set_title('Vertical trajectory (X-Z)')
+    axs[0].set_xlabel('Distance (X) [m]')
+    axs[0].set_ylabel('Height (Z) [m]')
     axs[0].legend()
     axs[0].grid()
-    axs[0].set_xlim(left=0)
 
-    # Horizontal drift (Distance XY vs lateral Y)
+    # 2. Dryf boczny
     axs[1].plot(traj[:, 4], traj[:, 2], label="Y (lateral drift)")
     axs[1].plot(target_distance, 0, 'rx', markersize=8, label='Target line')
-    axs[1].set_xlabel('Distance [m]')
-    axs[1].set_ylabel('Side offset [m]')
-    axs[1].set_title('Horizontal drift (Distance-Y)')
+    axs[1].set_title('Horizontal drift (X-Y)')
+    axs[1].set_xlabel('Distance (X) [m]')
+    axs[1].set_ylabel('Side offset (Y) [m]')
     axs[1].legend()
     axs[1].grid()
-    axs[1].set_xlim(left=0)
 
-    # Velocity and kinetic energy over time
-    ax3 = axs[2]
+    # 3. Prędkość i energia
     time = traj[:, 0]
     speed = traj[:, 6]
     energy = traj[:, 7]
-
+    ax3 = axs[2]
     ax3.plot(time, speed, 'b-', label='Velocity [m/s]')
     ax3.set_xlabel('Time [s]')
     ax3.set_ylabel('Velocity [m/s]', color='b')
     ax3.tick_params(axis='y', labelcolor='b')
-
     ax3b = ax3.twinx()
     ax3b.plot(time, energy, 'g-', label='Kinetic Energy [J]')
     ax3b.set_ylabel('Energy [J]', color='g')
     ax3b.tick_params(axis='y', labelcolor='g')
-
     ax3.set_title('Velocity & Kinetic Energy over time')
-    axs[2].set_xlim(left=0)
 
     fig.tight_layout()
     plt.savefig(filename)
